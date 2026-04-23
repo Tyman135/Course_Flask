@@ -1,150 +1,72 @@
-import random
 from flask import Flask, jsonify, request
+from sqlalchemy import select
+from db import db
+from orm.models import Quotes
 
 app = Flask(__name__)
+app.config['SQLALCHEMY_DATABASE_URI'] = 'postgresql://postgres:postgres@localhost/flask_bd'
 app.json.ensure_ascii = False
 
+db.init_app(app)
 
-quotes = [
-   {
-       "id": 3,
-       "author": "Rick Cook",
-       "text": "Программирование сегодня — это гонка разработчиков программ, стремящихся писать программы с большей и лучшей идиотоустойчивостью, и вселенной, которая пытается создать больше отборных идиотов. Пока вселенная побеждает."
-   },
-   {
-       "id": 5,
-       "author": "Waldi Ravens",
-       "text": "Программирование на С похоже на быстрые танцы на только что отполированном полу людей с острыми бритвами в руках."
-   },
-   {
-       "id": 6,
-       "author": "Mosher's Law of Software Engineering",
-       "text": "Не волнуйтесь, если что-то не работает. Если бы всё работало, вас бы уволили."
-   },
-   {
-       "id": 8,
-       "author": "Yoggi Berra",
-       "text": "В теории, теория и практика неразделимы. На практике это не так."
-   },
-
-]
-
-about_me = {
-    "name": "Иван",
-    "surname": "Дудыкин",
-    "email": "dudykin@list.ru"
-}
-
-
-@app.route("/")
-def hello_world():
-    return "Hello, World!"
-
+with app.app_context():
+    db.create_all()
 
 @app.get("/quotes")
 def get_quotes():
-    return jsonify(quotes)
-
-
-@app.route("/about")
-def about():
-    return about_me
+    quotes = db.session.execute(select(Quotes)).scalars().all()
+    return jsonify([q.to_dict() for q in quotes])
 
 
 @app.get("/quotes/<int:quote_id>")
-def quot_id(quote_id: int):
-    for quote in quotes:
-        if quote["id"] == quote_id:
-            return jsonify(quote), 200
-    return jsonify(error=f"Quote with id={quote_id} not found"), 404
-
-
-@app.get("/quotes/count")
-def get_count():
-    return {"count": len(quotes)}
-
-
-@app.get("/quotes/random")
-def get_random_quote():
-    if not quotes:
-        return jsonify(error="No quotes available"), 404
-    return jsonify(random.choice(quotes))
-
-
-def get_next_id() -> int:
-    if not quotes:
-        return 1
-    return quotes[-1]["id"] + 1
-
-
-def validate_rating(rating):
-    if 1 <= rating <= 5:
-        return rating
-    return 1 # Значение по умолчанию
-
-
-@app.get("/quotes/<int:quote_id>")
-def get_quote(quote_id):
-    for quote in quotes:
-        if quote["id"] == quote_id:
-            return jsonify(quote), 200
+def get_quote_by_id(quote_id):
+    quote = db.session.get(Quotes, quote_id)
+    if quote:
+        return jsonify(quote.to_dict()), 200
     return jsonify(error=f"Quote with id={quote_id} not found"), 404
 
 
 @app.post("/quotes")
 def create_quote():
     data = request.json
-    client_rating = data.get("rating", 1)
-
-    new_quote = {
-        "id": get_next_id(),
-        "author": data.get("author"),
-        "text": data.get("text"),
-        "rating": validate_rating(client_rating)
-    }
-    quotes.append(new_quote)
-    return jsonify(new_quote), 201
+    new_quote = Quotes(
+        author=data.get("author"),
+        text=data.get("text"),
+        rating=data.get("rating", 1)
+    )
+    db.session.add(new_quote)
+    db.session.commit()
+    return jsonify(new_quote.to_dict()), 201
 
 
-@app.route("/quotes/<int:quote_id>", methods=['PUT'])
+@app.put("/quotes/<int:quote_id>")
 def edit_quote(quote_id):
-    new_data = request.json
-    for quote in quotes:
-        if quote["id"] == quote_id:
-            if "author" in new_data:
-                quote["author"] = new_data["author"]
-            if "text" in new_data:
-                quote["text"] = new_data["text"]
-            if "rating" in new_data:
-                new_rating = new_data["rating"]
-                if 1 <= new_rating <= 5:
-                    quote["rating"] = new_rating
-            return jsonify(quote), 200
-    return jsonify(error="Not found"), 404
+    quote = db.session.get(Quotes, quote_id)
+    if not quote:
+        return jsonify(error="Not found"), 404
+
+    data = request.json
+    if "author" in data: quote.author = data["author"]
+    if "text" in data: quote.text = data["text"]
+    if "rating" in data:
+        new_rating = data["rating"]
+        if 1 <= new_rating <= 5:
+            quote.rating = new_rating
+
+    db.session.commit()
+    return jsonify(quote.to_dict()), 200
 
 
-@app.route("/quotes/<int:quote_id>", methods=['DELETE'])
+@app.delete("/quotes/<int:quote_id>")
 def delete_quote(quote_id):
-    for i in range(len(quotes)):
-        if quotes[i]["id"] == quote_id:
-            quotes.pop(i)
-            return jsonify({"message": f"Quote with id {quote_id} is deleted."}), 200
-    return jsonify({"error": "Quote not found"}), 404
+    quote = db.session.get(Quotes, quote_id)
+    if not quote:
+        return jsonify(error="Not found"), 404
 
+    db.session.delete(quote)
+    db.session.commit()
+    return jsonify(message=f"Quote with id {quote_id} is deleted."), 200
 
-@app.route("/quotes/filter", methods=['GET'])
-def filter_quotes():
-    author = request.args.get("author")
-    rating = request.args.get("rating")
-
-    result = []
-    for quote in quotes:
-        match_author = (author is None or quote["author"].lower() == author.lower())
-        match_rating = (rating is None or quote.get("rating", 0) == int(rating))
-
-        if match_author and match_rating:
-            result.append(quote)
-    return jsonify(result), 200
 
 if __name__ == "__main__":
     app.run(debug=True)
