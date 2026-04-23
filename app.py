@@ -4,22 +4,27 @@ from db import db
 from orm.models import Quotes
 
 app = Flask(__name__)
-app.config['SQLALCHEMY_DATABASE_URI'] = 'postgresql://postgres:postgres@localhost/flask_bd'
+app.config['SQLALCHEMY_DATABASE_URI'] = 'postgresql://postgres:password@localhost:5432/flask_bd'
 app.json.ensure_ascii = False
 
 db.init_app(app)
 
-with app.app_context():
-    db.create_all()
 
 @app.get("/quotes")
 def get_quotes():
-    quotes = db.session.execute(select(Quotes)).scalars().all()
-    return jsonify([q.to_dict() for q in quotes])
+    author = request.args.get("author")
+    rating = request.args.get("rating")
+    stmt = select(Quotes)
+    if author:
+        stmt = stmt.where(Quotes.author.ilike(f"%{author}%"))
+    if rating:
+        stmt = stmt.where(Quotes.rating == int(rating))
+    quotes_list = db.session.execute(stmt).scalars().all()
+    return jsonify([q.to_dict() for q in quotes_list])
 
 
 @app.get("/quotes/<int:quote_id>")
-def get_quote_by_id(quote_id):
+def get_quote(quote_id):
     quote = db.session.get(Quotes, quote_id)
     if quote:
         return jsonify(quote.to_dict()), 200
@@ -46,8 +51,10 @@ def edit_quote(quote_id):
         return jsonify(error="Not found"), 404
 
     data = request.json
-    if "author" in data: quote.author = data["author"]
-    if "text" in data: quote.text = data["text"]
+    if "author" in data:
+        quote.author = data["author"]
+    if "text" in data:
+        quote.text = data["text"]
     if "rating" in data:
         new_rating = data["rating"]
         if 1 <= new_rating <= 5:
